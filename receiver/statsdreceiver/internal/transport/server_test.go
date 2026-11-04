@@ -31,8 +31,10 @@ func Test_Server_ListenAndServe(t *testing.T) {
 			name:              "udp",
 			transport:         UDP,
 			getFreeEndpointFn: testutil.GetAvailableLocalNetworkAddress,
-			buildServerFn:     NewUDPServer,
-			buildClientFn:     client.NewStatsD,
+			buildServerFn: func(transport Transport, addr string) (Server, error) {
+				return NewUDPServer(transport, addr, 0)
+			},
+			buildClientFn: client.NewStatsD,
 		},
 		{
 			name:              "tcp",

@@ -5,6 +5,7 @@ package transport // import "github.com/open-telemetry/opentelemetry-collector-c
 
 import (
 	"errors"
+	"fmt"
 	"net"
 
 	"go.opentelemetry.io/collector/consumer"
@@ -13,6 +14,21 @@ import (
 type packetServer struct {
 	packetConn net.PacketConn
 	transport  Transport
+}
+
+// setReadBuffer applies SO_RCVBUF when size > 0; 0 keeps the OS default.
+func setReadBuffer(conn net.PacketConn, size int) error {
+	if size <= 0 {
+		return nil
+	}
+	rb, ok := conn.(interface{ SetReadBuffer(int) error })
+	if !ok {
+		return nil
+	}
+	if err := rb.SetReadBuffer(size); err != nil {
+		return fmt.Errorf("setting socket buffer size: %w", err)
+	}
+	return nil
 }
 
 // ListenAndServe starts the server ready to receive metrics.
