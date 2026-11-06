@@ -127,37 +127,51 @@ func (r *statsdReceiver) Start(ctx context.Context, host component.Host) error {
 			}
 		}
 	}()
+	// Flushing runs on its own goroutine so a slow consumer does not stall socket draining.
+	flushChan := make(chan []parser.BatchMetrics, 1)
+	go func() {
+		for {
+			select {
+			case batchMetrics := <-flushChan:
+				for _, batch := range batchMetrics {
+					r.flushBatch(ctx, batch)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 	go func() {
 		var failCnt, successCnt int64
 		for {
 			select {
 			case <-ticker.C:
-				batchMetrics := r.parser.GetMetrics()
-				for _, batch := range batchMetrics {
-					batchCtx := client.NewContext(ctx, batch.Info)
-					numPoints := batch.Metrics.DataPointCount()
-					flushCtx := r.obsrecv.StartMetricsOp(batchCtx)
-					err := r.Flush(flushCtx, batch.Metrics, r.nextConsumer)
-					if err != nil {
-						r.reporter.OnDebugf("Error flushing metrics", zap.Error(err))
-					}
-					r.obsrecv.EndMetricsOp(flushCtx, metadata.Type.String(), numPoints, err)
+				select {
+				case flushChan <- r.parser.GetMetrics():
+				case <-ctx.Done():
 				}
 			case metric := <-transferChan:
-				err := r.parser.Aggregate(metric.Raw, metric.Addr)
-				if err != nil {
-					failCnt++
-					if failCnt%100 == 0 {
-						r.reporter.RecordParseFailure()
-						failCnt = 0
+				for rest := metric.Raw; rest != ""; {
+					var line string
+					line, rest, _ = strings.Cut(rest, "\n")
+					if line == "" {
+						continue
 					}
-					r.reporter.OnDebugf("Error aggregating pmetric", zap.Error(err))
-				} else {
-					successCnt++
-					// Record every 100 to reduce overhead
-					if successCnt%100 == 0 {
-						r.reporter.RecordParseSuccess(successCnt)
-						successCnt = 0
+					err := r.parser.Aggregate(line, metric.Addr)
+					if err != nil {
+						failCnt++
+						if failCnt%100 == 0 {
+							r.reporter.RecordParseFailure()
+							failCnt = 0
+						}
+						r.reporter.OnDebugf("Error aggregating pmetric", zap.Error(err))
+					} else {
+						successCnt++
+						// Record every 100 to reduce overhead
+						if successCnt%100 == 0 {
+							r.reporter.RecordParseSuccess(successCnt)
+							successCnt = 0
+						}
 					}
 				}
 			case <-ctx.Done():
@@ -178,6 +192,17 @@ func (r *statsdReceiver) Shutdown(context.Context) error {
 	err := r.server.Close()
 	r.cancel()
 	return err
+}
+
+func (r *statsdReceiver) flushBatch(ctx context.Context, batch parser.BatchMetrics) {
+	batchCtx := client.NewContext(ctx, batch.Info)
+	numPoints := batch.Metrics.DataPointCount()
+	flushCtx := r.obsrecv.StartMetricsOp(batchCtx)
+	err := r.Flush(flushCtx, batch.Metrics, r.nextConsumer)
+	if err != nil {
+		r.reporter.OnDebugf("Error flushing metrics", zap.Error(err))
+	}
+	r.obsrecv.EndMetricsOp(flushCtx, metadata.Type.String(), numPoints, err)
 }
 
 func (*statsdReceiver) Flush(ctx context.Context, metrics pmetric.Metrics, nextConsumer consumer.Metrics) error {

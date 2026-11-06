@@ -69,20 +69,14 @@ func (u *packetServer) ListenAndServe(
 	}
 }
 
-// handlePacket is helper that parses the buffer and split it line by line to be parsed upstream.
+// handlePacket forwards the whole packet as one Metric, the consumer splits it into lines.
 func (*packetServer) handlePacket(
 	numBytes int,
 	data []byte,
 	addr net.Addr,
 	transferChan chan<- Metric,
 ) {
-	splitPacket := NewSplitBytes(data[:numBytes], '\n')
-	for splitPacket.Next() {
-		chunk := splitPacket.Chunk()
-		if len(chunk) > 0 {
-			transferChan <- Metric{string(chunk), addr}
-		}
-	}
+	transferChan <- Metric{string(data[:numBytes]), addr}
 }
 
 type udsAddr struct {

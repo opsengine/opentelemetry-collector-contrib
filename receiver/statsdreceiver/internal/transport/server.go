@@ -29,6 +29,7 @@ type Server interface {
 	Close() error
 }
 
+// Metric is one or more newline-separated StatsD lines received from Addr.
 type Metric struct {
 	Raw  string
 	Addr net.Addr
